@@ -612,6 +612,8 @@ class ViewAndMutationMeta:
     # to reset the grad mode to its pre-graph value prior to calling aot_autograd.
     grad_enabled_mutation: Optional[bool] = None
 
+    deterministic: Optional[bool] = None
+
     def __post_init__(self):
         # pre-compute the indices of the inputs that are mutated.
         # When keep_input_mutations is set, we don't need to worry about our epilogue
@@ -3774,6 +3776,7 @@ def aot_dispatch_autograd_graph(flat_fn, flat_args: List[Any], aot_config: AOTCo
     return fx_g, updated_joint_inputs, maybe_subclass_meta
 
 def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, *, fw_metadata: ViewAndMutationMeta):
+    fw_metadata.deterministic = torch.are_deterministic_algorithms_enabled()
     fx_g, joint_inputs, maybe_subclass_meta = aot_dispatch_autograd_graph(flat_fn, flat_args, aot_config, fw_metadata=fw_metadata)
 
     # Copied from aot_dispatch_autograd_graph.
@@ -4120,9 +4123,19 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Any], aot_config: AOTConfig, 
             num_intermediate_bases = CompiledFunction.metadata.num_intermediate_bases
             num_graph_handled_inputs = CompiledFunction.metadata.num_mutated_graph_handled_indices
             num_mutated_runtime_inps = CompiledFunction.metadata.num_mutated_inp_runtime_indices
+            deterministic = CompiledFunction.metadata.deterministic
             expected_grad_outs = (
                 CompiledFunction.metadata.num_outputs + num_mutated_runtime_inps + num_intermediate_bases
             )
+
+            global_deterministic = torch.are_deterministic_algorithms_enabled()
+            if deterministic is not None and deterministic != global_deterministic:
+                warnings.warn((
+                    'This compiled backward function is being run with '
+                    f'torch.use_deterministic_algorithms({global_deterministic}), '
+                    'but it was previously generated during the forward function while '
+                    f'torch.use_deterministic_algorithms({deterministic}) was set.'
+                ), UserWarning)
 
             if num_graph_handled_inputs > 0:
                 flat_args = flat_args[:-num_graph_handled_inputs]
