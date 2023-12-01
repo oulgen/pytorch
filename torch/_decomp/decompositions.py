@@ -3357,17 +3357,17 @@ def _upsample_linear(
         # ceil or floor.
         n = format(j, f"00{d}b")
         idx = [None, None]
-        scales = []
+        xscales = []
         for k in range(d):
             if n[k] == "0":
                 idx.append(floor_views[k])
-                scales.append(1.0 - (views[k] - floor_views[k]))
+                xscales.append(1.0 - (views[k] - floor_views[k]))
             else:
                 idx.append(ceil_views[k])
-                scales.append(views[k] - floor_views[k])
+                xscales.append(views[k] - floor_views[k])
         v = aten._unsafe_index(input, idx)
-        for scale in scales:
-            v = torch.mul(v, scale)
+        for xscale in xscales:
+            v = torch.mul(v, xscale)
         result = result + v
 
     # convert output to correct memory format, if necessary
@@ -3376,6 +3376,8 @@ def _upsample_linear(
     # following "heuristic: only use channels_last path when it's faster than the contiguous path"
     if input.device.type == "cuda" and n_channels < 16:
         memory_format = torch.contiguous_format
+
+    assert isinstance(result, torch.Tensor)
 
     result = result.contiguous(memory_format=memory_format)
 
