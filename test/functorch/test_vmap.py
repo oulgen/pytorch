@@ -1171,6 +1171,18 @@ class TestVmapAPI(TestCase):
         self.assertEqual(out, f(None, y))
         self.assertEqual(out_dims, (None, None, None))
 
+    # >>> import torch
+    # >>> from torch._subclasses.fake_tensor import FakeTensorMode
+    # >>> fake_mode = FakeTensorMode()
+    # >>> a = torch.arange(5)
+    # >>> fake_x = fake_mode.from_tensor(a)
+    # >>> fake_x
+    # FakeTensor(..., size=(5,), dtype=torch.int64)
+    # >>> a.data
+    # tensor([0, 1, 2, 3, 4])
+    # >>> fake_x.data
+    # FakeTensor(..., size=(5,), dtype=torch.int64)
+    @skipIf(TEST_WITH_TORCHDYNAMO, "It is not invalid to access .data of a FakeTensor")
     def test_data_attribute(self):
         def foo(x):
             y = x.data
@@ -5031,8 +5043,9 @@ class TestRandomness(TestCase):
 class TestTransformFailure(TestCase):
     @parametrize('transform', ['vmap', 'grad', 'grad_and_value', 'vjp', 'jvp', 'jacrev', 'jacfwd'])
     def test_fails_with_autograd_function(self, device, transform):
+        failed_build_envs = ('linux-focal-py3.8-clang10', 'linux-focal-py3.11-clang10')
         if (device == 'cpu' and transform in ['grad', 'vmap'] and
-                TEST_WITH_TORCHDYNAMO and os.getenv('BUILD_ENVIRONMENT', '') == 'linux-focal-py3.8-clang10'):
+                TEST_WITH_TORCHDYNAMO and os.getenv('BUILD_ENVIRONMENT', '') in failed_build_envs):
             raise unittest.SkipTest("Unexpected successes on focal with dynamo," +
                                     " see https://github.com/pytorch/pytorch/issues/107173")
 
