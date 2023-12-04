@@ -785,6 +785,25 @@ def diagonal_backward(
     return torch.diagonal_scatter(grad_input, grad_output, offset, dim1, dim2)
 
 
+@register_decomposition(aten.block_diag)
+@out_wrapper()
+def block_diag(tensors: List[Tensor]):
+    ncols = sum([tensor.shape[1] for tensor in tensors])
+    device = tensors[0].device
+
+    result = []
+
+    col_start = 0
+    for tensor in tensors:
+        row, col = tensor.shape
+        left = torch.zeros((row, col_start), device=device)
+        right = torch.zeros((row, ncols - col_start - col), device=device)
+        result += [torch.cat((left, tensor, right), dim=1)]
+        col_start += col
+
+    return torch.cat(result, dim=0)
+
+
 def _cast_grad_to_input_dtype(
     grad_output: Tensor, grad_input: Tensor, input_dtype: torch.dtype
 ):
