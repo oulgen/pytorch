@@ -243,8 +243,41 @@ class TestDTensorReshardMeshChange(DTensorTestBase):
                     global_tensor, state_dict_to_load["dtensor"].to_local()
                 )
 
+    @with_comms
+    @with_temp_dir
+    @skip_if_lt_x_gpu(2)
+    def test_dtensor_resharding_with_empty_shard(self):
+        tensor = torch.rand(1).cuda()
+        from torch.distributed._tensor import init_device_mesh
+        mesh = init_device_mesh(self.device_type, (self.world_size,))
+        dtensor = distribute_tensor(tensor, mesh, [Shard(0)])
+        ref_state_dict = {"dtensor": dtensor}
+
+        dist_cp.save_state_dict(
+            state_dict=ref_state_dict,
+            storage_writer=dist_cp.FileSystemWriter(path=self.temp_dir),
+        )
+
+        tensor = torch.rand(1).cuda()
+        mesh_2 = init_device_mesh(self.device_type, (2, self.world_size // 2))
+        dtensor = distribute_tensor(tensor, mesh_2, [Shard(0), Shard(0)])
+        state_dict = {"dtensor": dtensor}
+        dist_cp.load_state_dict(
+            state_dict=state_dict,
+            storage_reader=dist_cp.FileSystemReader(self.temp_dir),
+        )
+        print(ref_state_dict["dtensor"].full_tensor())
+        # print(state_dict["dtensor"].full_tensor())
+        # self.assertEqual(
+        #     ref_state_dict["dtensor"].full_tensor(), state_dict["dtensor"].full_tensor()
+        # )
+        from torch.distributed.checkpoint._state_dict_utils import _gather_state_dict
+        ref_state_dict_all_gather = _gather_state_dict(ref_state_dict)
+        state_dict_all_gather = _gather_state_dict(state_dict)
+        if self.rank == 0:
+            print(f"{ref_state_dict_all_gather=}, {state_dict_all_gather=}")
+
 
 # TODO: Add dtensor resharding test when world size changes.
-
 if __name__ == "__main__":
     run_tests()

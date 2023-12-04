@@ -54,9 +54,6 @@ class Shard(Placement):
         assert (
             self.dim <= tensor.ndim
         ), f"Sharding dim {self.dim} greater than tensor ndim {tensor.ndim}"
-        assert (
-            tensor.size(self.dim) > 0
-        ), f"Tensor size along dim{self.dim} is 0. There is nothing to be sharded."
 
         # chunk tensor over dimension `dim` into n slices with padding if necessary
         tensor_list = list(torch.chunk(tensor, num_chunks, dim=self.dim))
@@ -107,11 +104,22 @@ class Shard(Placement):
         tensor: torch.Tensor,
         pad_size: int,
     ) -> torch.Tensor:
+        length=tensor.size(self.dim) - pad_size
         return tensor.narrow(
             self.dim,
             start=0,
-            length=tensor.size(self.dim) - pad_size,
+            length=length,
         )
+        # import torch.distributed as dist
+        # length=tensor.size(self.dim) - pad_size
+        # print(f"rank:{dist.get_rank()} length:{length}")
+        # if length > 0:
+        #     return tensor.narrow(
+        #         self.dim,
+        #         start=0,
+        #         length=length,
+        #     )
+        # return torch.tensor([], device=tensor.device)
 
     def _local_shard_size_on_dim(
         self,
@@ -123,9 +131,6 @@ class Shard(Placement):
         """
         returns the local shard size and offset on a given tensor dim
         """
-        assert (
-            size_on_dim >= num_chunks
-        ), f"Size to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
 
         # Compute the chunk size inline with ``torch.chunk``
         full_chunk_size = (size_on_dim + num_chunks - 1) // num_chunks
@@ -221,6 +226,7 @@ class Shard(Placement):
         """
         my_coordinate = mesh.get_coordinate()
         num_chunks = mesh.size(mesh_dim=mesh_dim)
+        import torch.distributed as dist
 
         if my_coordinate is None:
             # if rank is not part of mesh, we simply return local_tensor,
@@ -228,7 +234,10 @@ class Shard(Placement):
             return local_tensor
 
         # check if it needs to pad input tensor before all_gather
+        import torch.distributed as dist
+
         full_chunk_size = (size[self.dim] + num_chunks - 1) // num_chunks
+        print(f"rank:{dist.get_rank()}, dim:{self.dim}, size[self.dim]:{size[self.dim]}, num_chunks:{num_chunks}, full_chunk_size:{full_chunk_size}")
         chunk_sizes = [
             max(
                 min(size[self.dim], full_chunk_size * (idx + 1))
@@ -241,9 +250,15 @@ class Shard(Placement):
         is_padded = size[self.dim] % num_chunks != 0
 
         pad_size = pad_sizes[my_coordinate[mesh_dim]]
+        if pad_size == 0 and local_tensor.numel() == 0:
+            pad_sizes[my_coordinate[mesh_dim]] = 1
+
+        pad_size = pad_sizes[my_coordinate[mesh_dim]]
         if pad_size > 0:
             local_tensor = self._pad_tensor(local_tensor, pad_size)
+
         local_tensor = local_tensor.contiguous()
+        print(f"rank: {dist.get_rank()}, {full_chunk_size=}, {chunk_sizes=}, {pad_sizes=}, {pad_size=}, {is_padded=}, {local_tensor=}")
 
         result = funcol.all_gather_tensor(
             local_tensor,
@@ -254,6 +269,7 @@ class Shard(Placement):
         # Unpad the tensor if the input tensor was padded
         if is_padded:
             full_pad_size = sum(pad_sizes)
+            # print(f"rank:{dist.get_rank()}, local_tensor:{local_tensor}, full_pad_size:{full_pad_size}, {result=}")
             result = self._unpad_tensor(result, full_pad_size)
         return result
 

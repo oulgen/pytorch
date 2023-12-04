@@ -2,7 +2,6 @@
 # Owner(s): ["oncall: distributed"]
 
 import torch
-import torch.distributed as dist
 import torch.nn.functional as F
 from numpy.testing import assert_array_equal
 from torch.distributed._functional_collectives import AsyncCollectiveTensor
@@ -365,6 +364,22 @@ class DTensorTest(DTensorTestBase):
 
         replica_grad = sharded_dtensor.grad.full_tensor()
         self.assertEqual(replica_grad, global_tensor * self.world_size)
+
+    @with_comms
+    def test_full_tensor_with_empty_shard(self):
+        print(self.world_size)
+        mesh_1d = init_device_mesh(self.device_type, (self.world_size,))
+        mesh_2d = init_device_mesh(self.device_type, (2, self.world_size // 2))
+        meshes = [mesh_1d, mesh_2d]
+        meshes = [mesh_2d]
+
+        for mesh in meshes:
+            placements = [Shard(0) for i in range(mesh.ndim)]
+            for size in (1,):
+                global_tensor = torch.ones(size)
+                sharded_dtensor = distribute_tensor(global_tensor, mesh, placements)
+                full_out = sharded_dtensor.full_tensor()
+                self.assertEqual(full_out, global_tensor)
 
     @with_comms
     def test_dtensor_new_empty_strided(self):
@@ -759,33 +774,33 @@ class TestDTensorPlacementTypes(DTensorTestBase):
             return tensor
 
     @with_comms
-    def test_split_tensor(self) -> None:
+    def test_split_tensor_1D(self) -> None:
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         shard_placement = Shard(0)
 
         for size in range(8):
             tensor = self._create_tensor(size)
+            splitted_tensor_list, pad_sizes = shard_placement._split_tensor(
+                tensor,
+                mesh.size(),
+                with_padding=True,
+                contiguous=True,
+            )
             if size == 0:
-                with self.assertRaisesRegex(
-                    Exception,
-                    "Tensor size along dim0 is 0. There is nothing to be sharded.",
-                ):
-                    _, _ = shard_placement._split_tensor(
-                        tensor,
-                        mesh.size(),
-                        with_padding=True,
-                        contiguous=True,
-                    )
+                # when tensor size is 0, there is no padding needed for all the ranks.
+                expected_pad_sizes = [0] * self.world_size
+                assert_array_equal(expected_pad_sizes, pad_sizes)
+
+                is_tensor_empty = [
+                    False if splitted_tensor.numel() > 0 else True
+                    for splitted_tensor in splitted_tensor_list
+                ]
+                expected_is_tensor_empty = [True] * self.world_size
+                assert_array_equal(expected_is_tensor_empty, is_tensor_empty)
             else:
-                splitted_tensor_list, pad_sizes = shard_placement._split_tensor(
-                    tensor,
-                    mesh.size(),
-                    with_padding=True,
-                    contiguous=True,
-                )
                 expected_pad_sizes = [
                     0 if idx < size else 1
-                    for idx, _ in enumerate(range(dist.get_world_size()))
+                    for idx, _ in enumerate(range(self.world_size))
                 ]
                 assert_array_equal(expected_pad_sizes, pad_sizes)
 
@@ -797,7 +812,7 @@ class TestDTensorPlacementTypes(DTensorTestBase):
                 ]
                 expected_is_tensor_empty = [
                     False if idx < size else True
-                    for idx, _ in enumerate(range(dist.get_world_size()))
+                    for idx, _ in enumerate(range(self.world_size))
                 ]
                 is_tensor_empty = [
                     False if unpadded_tensor.numel() > 0 else True
@@ -805,6 +820,15 @@ class TestDTensorPlacementTypes(DTensorTestBase):
                 ]
                 assert_array_equal(expected_is_tensor_empty, is_tensor_empty)
 
+    @with_comms
+    def test_split_tensor_2D(self) -> None:
+        mesh = init_device_mesh(self.device_type,(2, 2))
+        shard_placements = (Shard(0), Shard(0))
+
+        tensor = self._create_tensor(1)
+        dtensor = distribute_tensor(tensor, mesh, shard_placements)
+        print(f"rank:{self.rank}, dtensor:{dtensor}")
+        # print(f"rank:{self.rank}, dtensor:{dtensor}, full_tensor:{dtensor.full_tensor()}")
 
 if __name__ == "__main__":
     run_tests()
