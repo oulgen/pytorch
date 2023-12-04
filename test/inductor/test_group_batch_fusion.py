@@ -433,6 +433,7 @@ class TestBMMFusionModule(torch.nn.Module):
 
 
 @requires_cuda()
+@torch._inductor.config.patch(group_fusion=False, batch_fusion=False)
 @torch._inductor.config.patch(post_grad_fusion_options={"batch_linear_post_grad": {}})
 class TestPostGradBatchLinearFusion(TestCase):
     def test_batch_linear_post_grad_fusion(self):
